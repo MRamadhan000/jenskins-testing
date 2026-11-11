@@ -2,11 +2,6 @@
 pipeline {
     agent any
 
-    environment {
-        // Project Configuration File
-        CONFIG_FILE = credentials('FE_TEMPLATE_ENV')
-    }
-
     stages {
 
         stage('Checkout Source Code') {
@@ -18,83 +13,106 @@ pipeline {
             }
         }
 
-        stage('Load Configuration') {
+        stage('Validate Configuration') {
             steps {
-                sh '''
-                    set -a
-                    . "$CONFIG_FILE"
-                    set +a
+                withCredentials([
+                    file(credentialsId: 'FE_TEMPLATE_ENV', variable: 'CONFIG_FILE')
+                ]) {
+                    sh '''
+                        set -eu
 
-                    echo "Configuration loaded successfully"
-                    echo "Docker image: $DOCKER_IMAGE_NAME"
-                    echo "Container: $DOCKER_CONTAINER_NAME"
-                '''
+                        if [ ! -f "$CONFIG_FILE" ]; then
+                            echo "ERROR: Configuration file not found"
+                            exit 1
+                        fi
+
+                        echo "Configuration file found successfully"
+                    '''
+                }
             }
         }
 
         stage('Cleanup Old Container') {
             steps {
-                echo 'Cleaning up old container...'
+                withCredentials([
+                    file(credentialsId: 'FE_TEMPLATE_ENV', variable: 'CONFIG_FILE')
+                ]) {
+                    sh '''
+                        set -eu
+                        set -a
+                        . "$CONFIG_FILE"
+                        set +a
 
-                sh '''
-                    set -a
-                    . "$CONFIG_FILE"
-                    set +a
-
-                    if docker ps -aq --filter "name=^/${DOCKER_CONTAINER_NAME}$" | grep -q .; then
-                        docker stop "$DOCKER_CONTAINER_NAME" || true
-                        docker rm "$DOCKER_CONTAINER_NAME" || true
-                    fi
-                '''
+                        if docker ps -aq --filter "name=^/${DOCKER_CONTAINER_NAME}$" | grep -q .; then
+                            docker stop "$DOCKER_CONTAINER_NAME" || true
+                            docker rm "$DOCKER_CONTAINER_NAME" || true
+                        fi
+                    '''
+                }
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                echo 'Building Docker image...'
+                withCredentials([
+                    file(credentialsId: 'FE_TEMPLATE_ENV', variable: 'CONFIG_FILE')
+                ]) {
+                    sh '''
+                        set -eu
+                        set -a
+                        . "$CONFIG_FILE"
+                        set +a
 
-                sh '''
-                    set -a
-                    . "$CONFIG_FILE"
-                    set +a
+                        echo "Building Docker image..."
 
-                    docker build \
-                      --build-arg NEXT_PUBLIC_BASE_PATH="$NEXT_PUBLIC_BASE_PATH" \
-                      --build-arg NEXT_PUBLIC_APP_NAME="$NEXT_PUBLIC_APP_NAME" \
-                      -t "$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG" .
-                '''
+                        docker build \
+                          --build-arg "NEXT_PUBLIC_BASE_PATH=$NEXT_PUBLIC_BASE_PATH" \
+                          --build-arg "NEXT_PUBLIC_APP_NAME=$NEXT_PUBLIC_APP_NAME" \
+                          -t "$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG" .
+                    '''
+                }
             }
         }
 
         stage('Deploy Container') {
             steps {
-                echo 'Deploying Next.js application...'
+                withCredentials([
+                    file(credentialsId: 'FE_TEMPLATE_ENV', variable: 'CONFIG_FILE')
+                ]) {
+                    sh '''
+                        set -eu
+                        set -a
+                        . "$CONFIG_FILE"
+                        set +a
 
-                sh '''
-                    set -a
-                    . "$CONFIG_FILE"
-                    set +a
+                        echo "Deploying container..."
 
-                    docker run -d \
-                      --name "$DOCKER_CONTAINER_NAME" \
-                      --restart unless-stopped \
-                      -p "$DOCKER_PORT_HOST:$DOCKER_PORT_CONTAINER" \
-                      "$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG"
-                '''
+                        docker run -d \
+                          --name "$DOCKER_CONTAINER_NAME" \
+                          --restart unless-stopped \
+                          -p "$DOCKER_PORT_HOST:$DOCKER_PORT_CONTAINER" \
+                          "$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG"
+                    '''
+                }
             }
         }
 
         stage('Verify Deployment') {
             steps {
-                sh '''
-                    set -a
-                    . "$CONFIG_FILE"
-                    set +a
+                withCredentials([
+                    file(credentialsId: 'FE_TEMPLATE_ENV', variable: 'CONFIG_FILE')
+                ]) {
+                    sh '''
+                        set -eu
+                        set -a
+                        . "$CONFIG_FILE"
+                        set +a
 
-                    docker ps \
-                      --filter "name=^/${DOCKER_CONTAINER_NAME}$" \
-                      --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
-                '''
+                        docker ps \
+                          --filter "name=^/${DOCKER_CONTAINER_NAME}$" \
+                          --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
+                    '''
+                }
             }
         }
 
@@ -109,13 +127,17 @@ pipeline {
         success {
             echo 'Deployment successful!'
 
-            sh '''
-                set -a
-                . "$CONFIG_FILE"
-                set +a
+            withCredentials([
+                file(credentialsId: 'FE_TEMPLATE_ENV', variable: 'CONFIG_FILE')
+            ]) {
+                sh '''
+                    set -a
+                    . "$CONFIG_FILE"
+                    set +a
 
-                echo "Application URL: http://localhost:$DOCKER_PORT_HOST$NEXT_PUBLIC_BASE_PATH"
-            '''
+                    echo "Application URL: http://localhost:$DOCKER_PORT_HOST$NEXT_PUBLIC_BASE_PATH"
+                '''
+            }
         }
 
         failure {
