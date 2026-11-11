@@ -1,69 +1,88 @@
+
 pipeline {
     agent any
 
     environment {
-        IMAGE_NAME     = 'my-frontend'
-        IMAGE_TAG      = 'latest'
-        CONTAINER_NAME = 'my-frontend'
-        PORT_HOST      = '3000'
-        PORT_CONTAINER = '3000'
+        // Docker Configuration
+        IMAGE_NAME     = credentials('DOCKER_IMAGE_NAME_FE_TEMPLATE')
+        IMAGE_TAG      = credentials('DOCKER_IMAGE_TAG_FE_TEMPLATE')
+        CONTAINER_NAME = credentials('DOCKER_CONTAINER_NAME_FE_TEMPLATE')
+
+        // Port Configuration
+        PORT_HOST      = credentials('DOCKER_PORT_HOST_FE_TEMPLATE')
+        PORT_CONTAINER = credentials('DOCKER_PORT_CONTAINER_FE_TEMPLATE')
+
+        // Next.js Configuration
+        NEXT_PUBLIC_BASE_PATH = credentials('NEXT_PUBLIC_BASE_PATH_FE_TEMPLATE')
+        NEXT_PUBLIC_APP_NAME  = credentials('NEXT_PUBLIC_APP_NAME_FE_TEMPLATE')
     }
 
     stages {
         stage('Checkout Source Code') {
             steps {
-                echo 'Mengunduh repository dari GitHub...'
-                git branch: 'main', url: 'https://github.com/MRamadhan000/jenskins-testing.git'
+                echo 'Checkout source code...'
+
+                git branch: 'main',
+                    url: 'https://github.com/MRamadhan000/jenskins-testing.git'
             }
         }
 
-        stage('Cleanup Container Lama') {
+        stage('Cleanup Old Container') {
             steps {
-                echo 'Menghentikan container lama jika sedang berjalan...'
+                echo 'Cleaning up old container...'
+
                 sh '''
-                    if [ $(docker ps -aq -f name=${CONTAINER_NAME}) ]; then
-                        echo "Menghentikan dan menghapus container ${CONTAINER_NAME}..."
-                        docker stop ${CONTAINER_NAME} || true
-                        docker rm ${CONTAINER_NAME} || true
+                    if docker ps -aq -f name="^${CONTAINER_NAME}$" | grep -q .; then
+                        docker stop "${CONTAINER_NAME}" || true
+                        docker rm "${CONTAINER_NAME}" || true
                     fi
                 '''
             }
         }
 
-        stage('Build Docker Image (Opsi Aman)') {
+        stage('Build Docker Image') {
             steps {
-                echo 'Memulai proses Docker Build dengan variabel aman...'
-                // Mengambil nilai rahasia dari Jenkins Credentials secara aman
-                withCredentials([
-                    string(credentialsId: 'NEXT_PUBLIC_BASE_PATH_CRED', variable: 'BASE_PATH_VAL'),
-                    string(credentialsId: 'NEXT_PUBLIC_APP_NAME_CRED', variable: 'APP_NAME_VAL')
-                ]) {
-                    sh '''
-                        docker build \
-                          --build-arg NEXT_PUBLIC_BASE_PATH="${BASE_PATH_VAL}" \
-                          --build-arg NEXT_PUBLIC_APP_NAME="${APP_NAME_VAL}" \
-                          -t ${IMAGE_NAME}:${IMAGE_TAG} .
-                    '''
-                }
+                echo 'Building Docker image...'
+
+                sh '''
+                    docker build \
+                      --build-arg NEXT_PUBLIC_BASE_PATH="${NEXT_PUBLIC_BASE_PATH}" \
+                      --build-arg NEXT_PUBLIC_APP_NAME="${NEXT_PUBLIC_APP_NAME}" \
+                      -t "${IMAGE_NAME}:${IMAGE_TAG}" .
+                '''
             }
         }
 
-        stage('Deploy / Run Container') {
+        stage('Deploy Container') {
             steps {
-                echo 'Menjalankan container Next.js baru...'
+                echo 'Deploying Next.js application...'
+
                 sh '''
                     docker run -d \
-                      --name ${CONTAINER_NAME} \
+                      --name "${CONTAINER_NAME}" \
                       --restart unless-stopped \
-                      -p ${PORT_HOST}:${PORT_CONTAINER} \
-                      ${IMAGE_NAME}:${IMAGE_TAG}
+                      -p "${PORT_HOST}:${PORT_CONTAINER}" \
+                      "${IMAGE_NAME}:${IMAGE_TAG}"
+                '''
+            }
+        }
+
+        stage('Verify Deployment') {
+            steps {
+                echo 'Checking container status...'
+
+                sh '''
+                    docker ps \
+                      --filter "name=^${CONTAINER_NAME}$" \
+                      --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
                 '''
             }
         }
 
         stage('Prune Unused Images') {
             steps {
-                echo 'Membersihkan image menggantung (dangling images)...'
+                echo 'Cleaning dangling Docker images...'
+
                 sh 'docker image prune -f'
             }
         }
@@ -71,10 +90,16 @@ pipeline {
 
     post {
         success {
-            echo "Deployment berhasil! Aplikasi berjalan di http://localhost:${PORT_HOST}"
+            echo 'Deployment successful!'
+            echo "Application: http://localhost:${PORT_HOST}${NEXT_PUBLIC_BASE_PATH}"
         }
+
         failure {
-            echo 'Deployment gagal. Silakan cek logConsole Output.'
+            echo 'Deployment failed. Check Jenkins Console Output.'
+        }
+
+        always {
+            echo 'Pipeline execution completed.'
         }
     }
 }
