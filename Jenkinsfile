@@ -3,21 +3,12 @@ pipeline {
     agent any
 
     environment {
-        // Docker Configuration
-        IMAGE_NAME     = credentials('DOCKER_IMAGE_NAME_FE_TEMPLATE')
-        IMAGE_TAG      = credentials('DOCKER_IMAGE_TAG_FE_TEMPLATE')
-        CONTAINER_NAME = credentials('DOCKER_CONTAINER_NAME_FE_TEMPLATE')
-
-        // Port Configuration
-        PORT_HOST      = credentials('DOCKER_PORT_HOST_FE_TEMPLATE')
-        PORT_CONTAINER = credentials('DOCKER_PORT_CONTAINER_FE_TEMPLATE')
-
-        // Next.js Configuration
-        NEXT_PUBLIC_BASE_PATH = credentials('NEXT_PUBLIC_BASE_PATH_FE_TEMPLATE')
-        NEXT_PUBLIC_APP_NAME  = credentials('NEXT_PUBLIC_APP_NAME_FE_TEMPLATE')
+        // Project Configuration File
+        CONFIG_FILE = credentials('FE_TEMPLATE_ENV')
     }
 
     stages {
+
         stage('Checkout Source Code') {
             steps {
                 echo 'Checkout source code...'
@@ -27,14 +18,32 @@ pipeline {
             }
         }
 
+        stage('Load Configuration') {
+            steps {
+                sh '''
+                    set -a
+                    . "$CONFIG_FILE"
+                    set +a
+
+                    echo "Configuration loaded successfully"
+                    echo "Docker image: $DOCKER_IMAGE_NAME"
+                    echo "Container: $DOCKER_CONTAINER_NAME"
+                '''
+            }
+        }
+
         stage('Cleanup Old Container') {
             steps {
                 echo 'Cleaning up old container...'
 
                 sh '''
-                    if docker ps -aq -f name="^${CONTAINER_NAME}$" | grep -q .; then
-                        docker stop "${CONTAINER_NAME}" || true
-                        docker rm "${CONTAINER_NAME}" || true
+                    set -a
+                    . "$CONFIG_FILE"
+                    set +a
+
+                    if docker ps -aq --filter "name=^/${DOCKER_CONTAINER_NAME}$" | grep -q .; then
+                        docker stop "$DOCKER_CONTAINER_NAME" || true
+                        docker rm "$DOCKER_CONTAINER_NAME" || true
                     fi
                 '''
             }
@@ -45,10 +54,14 @@ pipeline {
                 echo 'Building Docker image...'
 
                 sh '''
+                    set -a
+                    . "$CONFIG_FILE"
+                    set +a
+
                     docker build \
-                      --build-arg NEXT_PUBLIC_BASE_PATH="${NEXT_PUBLIC_BASE_PATH}" \
-                      --build-arg NEXT_PUBLIC_APP_NAME="${NEXT_PUBLIC_APP_NAME}" \
-                      -t "${IMAGE_NAME}:${IMAGE_TAG}" .
+                      --build-arg NEXT_PUBLIC_BASE_PATH="$NEXT_PUBLIC_BASE_PATH" \
+                      --build-arg NEXT_PUBLIC_APP_NAME="$NEXT_PUBLIC_APP_NAME" \
+                      -t "$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG" .
                 '''
             }
         }
@@ -58,22 +71,28 @@ pipeline {
                 echo 'Deploying Next.js application...'
 
                 sh '''
+                    set -a
+                    . "$CONFIG_FILE"
+                    set +a
+
                     docker run -d \
-                      --name "${CONTAINER_NAME}" \
+                      --name "$DOCKER_CONTAINER_NAME" \
                       --restart unless-stopped \
-                      -p "${PORT_HOST}:${PORT_CONTAINER}" \
-                      "${IMAGE_NAME}:${IMAGE_TAG}"
+                      -p "$DOCKER_PORT_HOST:$DOCKER_PORT_CONTAINER" \
+                      "$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG"
                 '''
             }
         }
 
         stage('Verify Deployment') {
             steps {
-                echo 'Checking container status...'
-
                 sh '''
+                    set -a
+                    . "$CONFIG_FILE"
+                    set +a
+
                     docker ps \
-                      --filter "name=^${CONTAINER_NAME}$" \
+                      --filter "name=^/${DOCKER_CONTAINER_NAME}$" \
                       --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
                 '''
             }
@@ -81,8 +100,6 @@ pipeline {
 
         stage('Prune Unused Images') {
             steps {
-                echo 'Cleaning dangling Docker images...'
-
                 sh 'docker image prune -f'
             }
         }
@@ -91,7 +108,14 @@ pipeline {
     post {
         success {
             echo 'Deployment successful!'
-            echo "Application: http://localhost:${PORT_HOST}${NEXT_PUBLIC_BASE_PATH}"
+
+            sh '''
+                set -a
+                . "$CONFIG_FILE"
+                set +a
+
+                echo "Application URL: http://localhost:$DOCKER_PORT_HOST$NEXT_PUBLIC_BASE_PATH"
+            '''
         }
 
         failure {
